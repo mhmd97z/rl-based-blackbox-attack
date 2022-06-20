@@ -3,8 +3,8 @@ import gym
 from gym import spaces
 import numpy as np
 import math
-from gym_bb_attack.envs.utils import *
-# from service_requests import *
+#from gym_bb_attack.envs.utils import *
+from utils import *
 import math
 
 np.seterr(invalid='raise')
@@ -18,9 +18,27 @@ class Attack_Env(gym.Env):
 
     def __init__(self):
 
-        self.encoder = None
-        self.decoder = None
+
+
+        # Original Image features
+        self.orig_image = None
+        self.orig_image_enc = None
+        self.orig_image_label = None
+
+        # Purturbation features
+        self.relative_pos_vector = None
+        self.purt_image_label = None
+
+        #Autoencoder
         self.n_enc_dims = 4
+        self.encoder = Encoder(encoded_space_dim=self.n_enc_dims, fc2_input_dim=128)
+        load_weights(encoder, "./encoder.pt")
+        self.decoder = Decoder(encoded_space_dim=self.n_enc_dims, fc2_input_dim=128)
+        load_weights(decoder, "./decoder.pt")
+
+        # Dataset of image to train RL agent on
+        data_dir = 'dataset'
+        self.train_dataset = torchvision.datasets.MNIST(data_dir, train=True, download=True)
 
 
         self.action_space = spaces.Box(low=-1, high=1,
@@ -28,11 +46,9 @@ class Attack_Env(gym.Env):
 
 
         self.observation_space = spaces.Space(
-                                            #The image encoding
+                                            #The perturbed image's encoding
                                             spaces.Box(low=0, high=1, shape=(self.n_enc_dims,),dtype=np.float32),
 
-                                            #Current position vector wrt. original image
-                                            spaces.Box(low=0, high=1, shape=(self.n_enc_dims,), dtype=np.float32),
 
                                             #Current l_inf distance
                                             spaces.Box(low=0, high=1, shape=(self.n_enc_dims,),dtype=np.float32),
@@ -49,6 +65,10 @@ class Attack_Env(gym.Env):
         return self.get_observation_space(), reward, done, info
 
     def reset(self):
+        self.orig_image = get_random_image(self.train_dataset)
+        self.orig_image_enc = encode_image(self.orig_image, self.encoder)
+        self.orig_image_label =
+
         return self.get_observation_space()
 
     def get_observation_space(self):
