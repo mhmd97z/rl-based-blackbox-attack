@@ -18,23 +18,32 @@ class Attack_Env(gym.Env):
 
     def __init__(self):
 
-
+        #Hyperparameters
+        self.beta = 0.7
+        self.max_steps = 100
+        self.n_step = 0
+        self.image_dims = 28 * 28
+        self.n_classes = 10
 
         # Original Image features
-        self.orig_image = None
-        self.orig_image_enc = None
-        self.orig_image_label = None
+        self.orig_image = None # Original image
+        self.orig_image_label = None # Original image label
+        self.target_image_label = None # Target image label
 
-        # Purturbation features
-        self.relative_pos_vector = None
-        self.purt_image_label = None
+        # Perturbed image features
+        self.current_image = None # Perturbed image
+        self.current_image_enc = None # Enc of perturbed image
+        self.relative_pos_vector = None # Cumulative perturbations matrix
+        self.current_image_label = None # Perturbed image label
 
-        #Autoencoder
+        #Autoencoder and classifier models and weights
         self.n_enc_dims = 4
         self.encoder = Encoder(encoded_space_dim=self.n_enc_dims, fc2_input_dim=128)
-        load_weights(encoder, "./encoder.pt")
+        load_weights(self.encoder, "./encoder.pt")
         self.decoder = Decoder(encoded_space_dim=self.n_enc_dims, fc2_input_dim=128)
-        load_weights(decoder, "./decoder.pt")
+        load_weights(self.decoder, "./decoder.pt")
+        self.classifier = Classifier()
+        load_weights(self.classifier, "./classifier.pth")
 
         # Dataset of image to train RL agent on
         data_dir = 'dataset'
@@ -42,37 +51,77 @@ class Attack_Env(gym.Env):
 
 
         self.action_space = spaces.Box(low=-1, high=1,
-                                       shape=(self.N_ENC_DIMS,), dtype=np.float32)
+                                       shape=(self.n_enc_dims,), dtype=np.float32)
 
-
-        self.observation_space = spaces.Space(
+        # This is a
+        self.observation_space = spaces.Space((
                                             #The perturbed image's encoding
                                             spaces.Box(low=0, high=1, shape=(self.n_enc_dims,),dtype=np.float32),
 
 
-                                            #Current l_inf distance
+                                            #Current l_inf  distance
                                             spaces.Box(low=0, high=1, shape=(self.n_enc_dims,),dtype=np.float32),
 
                                             #Image original label
                                             spaces.Discrete(10),
 
-                                            #Image current label
-                                            spaces.Discrete(10),)
+                                            #Current image label
+                                            spaces.Discrete(10),))
 
 
     def step(self, action):
-        reward, done, info = None, None, None
+        reward = 0
+        done = False
+        info = {}
+
+        # Getting the updated image
+        updated_image = decode_image(self.current_image_enc + action, self.decoder)
+
+        # Image out of bounds
+        if np.max(updated_image) > 1 or np.min(updated_image) < 0: # If image is out of range
+            reward = -100
+        else: # If image is in bounds then Perturb the image
+            self.relative_pos_vector += np.reshape(updated_image - self.current_image, (self.image_dims))
+            self.current_image_enc = self.current_image_enc + action
+            self.current_image = decode_image(self.current_image_enc, self.decoder)
+            self.current_image_label = np.argmax(classify_image(self.current_image, self.classifier))
+
+            reward = \
+                self.beta * np.log(
+                    np.clip(get_class_prob(self.current_image, self.target_image_label, self.classifier), 1e-5, 1)) +\
+                (1 - self.beta) * np.log(
+                    np.clip(get_class_prob(self.current_image, self.orig_image_label, self.classifier), 1e-5, 1))
+
+        if self.current_image_label == self.target_image_label or\
+            self.n_step >= self.max_steps:
+            done = True
+
+        self.n_step += 1
+
+
         return self.get_observation_space(), reward, done, info
 
     def reset(self):
         self.orig_image = get_random_image(self.train_dataset)
-        self.orig_image_enc = encode_image(self.orig_image, self.encoder)
-        self.orig_image_label =
+        self.orig_image_label = np.argmax(classify_image(self.orig_image, self.classifier))
+
+        self.current_image = self.orig_image
+        self.current_image_label = self.orig_image_label
+        self.current_image_enc = encode_image(self.current_image, self.encoder)
+
+        self.target_image_label = np.random.randint(0, 10)
+        self.relative_pos_vector = np.zeros(shape=(1, self.image_dims))
+        self.n_step = 0
 
         return self.get_observation_space()
 
     def get_observation_space(self):
-        observation_space = None
+
+        observation_space = [self.current_image_enc,
+                             np.max(np.abs(self.current_image - self.orig_image)),
+                             get_one_hot(self.orig_image_label, self.n_classes),
+                             get_one_hot(self.current_image_label, self.n_classes)]
+
         return observation_space
 
 
@@ -85,4 +134,3 @@ def run_base_case(env, n_episodes):
 
 if __name__ == "__main__":
     env = Attack_Env()
-    run_base_case(env, 10)

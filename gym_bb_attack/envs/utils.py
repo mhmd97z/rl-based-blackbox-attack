@@ -78,15 +78,54 @@ class Decoder(nn.Module):
         x = torch.sigmoid(x)
         return x
 
+
+class Classifier(nn.Module):
+    def __init__(self):
+        super(Classifier, self).__init__()
+
+        # 28x28x1 => 26x26x32
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=5, padding=2)
+        self.pool1 = nn.MaxPool2d(2, stride=2)
+        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=5, padding=2)
+        self.pool2 = nn.MaxPool2d(2, stride=2)
+
+        self.d1 = nn.Linear(7 * 7 * 64, 1024)
+        self.d2 = nn.Linear(1024, 625)
+        self.d3 = nn.Linear(625, 10)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = F.relu(x)
+        x = self.pool1(x)
+
+        x = self.conv2(x)
+        x = F.relu(x)
+        x = self.pool2(x)
+
+        # flatten
+        x = x.flatten(start_dim=1)
+
+        # FC layers
+        x = self.d1(x)
+        x = F.relu(x)
+        x = self.d2(x)
+        x = F.relu(x)
+
+        # logits => 10
+        logits = self.d3(x)
+        out = F.softmax(logits, dim=1)
+        return out
+
 def load_weights(model, filename):
     model.load_state_dict(torch.load(filename, map_location=torch.device('cpu')))
 
 def encode_image(image, encoder):
     image_tensor = torch.from_numpy(np.array(np.reshape(image, (1, 1, 28, 28)), dtype=np.float32))
-    return encoder(image_tensor)
+    return encoder(image_tensor).detach().numpy()[0]
 
 def decode_image(encoding, decoder):
-    return decoder(encoding)
+    encoding = torch.Tensor(encoding).unsqueeze(0)
+    return decoder(encoding).detach().numpy()[0][0]
 
 def get_random_image(train_dataset):
     rand_index = np.random.randint(len(train_dataset))
@@ -95,12 +134,27 @@ def get_random_image(train_dataset):
 def get_random_encoded_image(train_dataset, encoder):
     return encode_image(get_random_image(train_dataset), encoder)
 
+def classify_image(image, classifier):
+    image = torch.Tensor(image).unsqueeze(0).unsqueeze(0)
+    return classifier(image).detach().numpy()[0]
+
+def get_class_prob(image, clas, classifier):
+    image = torch.Tensor(image).unsqueeze(0).unsqueeze(0)
+    return classifier(image).detach().numpy()[0][clas]
+
+def get_one_hot(index, max_index):
+    out = np.zeros(max_index)
+    out[index] = 1
+    return out
+
 if __name__=="__main__":
     d = 4
     encoder = Encoder(encoded_space_dim=d,fc2_input_dim=128)
     load_weights(encoder, "./encoder.pt")
     decoder = Decoder(encoded_space_dim=d,fc2_input_dim=128)
     load_weights(decoder, "./decoder.pt")
+    classifier = Classifier()
+    load_weights(classifier, "./classifier.pth")
 
     data_dir = 'dataset'
 
@@ -115,3 +169,4 @@ if __name__=="__main__":
     train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size)
     valid_loader = torch.utils.data.DataLoader(val_data, batch_size=batch_size)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
+
