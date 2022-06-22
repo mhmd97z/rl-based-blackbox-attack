@@ -131,6 +131,21 @@ def get_random_image(train_dataset):
     rand_index = np.random.randint(len(train_dataset))
     return np.array(train_dataset[rand_index][0])/255
 
+def get_class_image(train_dataset, clas, classifier, encoder, decoder):
+    rand_index = np.random.randint(len(train_dataset))
+    image = np.array(train_dataset[rand_index][0])/255
+    image_enc = encode_image(image, encoder)
+    image_dec = decode_image(image_enc, decoder)
+    classification = classify_image(image_dec, classifier)
+
+    while np.argmax(classification) != clas:
+        rand_index = np.random.randint(len(train_dataset))
+        image = np.array(train_dataset[rand_index][0])/255
+        image_enc = encode_image(image, encoder)
+        image_dec = decode_image(image_enc, decoder)
+        classification = classify_image(image_dec, classifier)
+    return image, image_enc
+
 def get_random_encoded_image(train_dataset, encoder):
     return encode_image(get_random_image(train_dataset), encoder)
 
@@ -146,6 +161,12 @@ def get_one_hot(index, max_index):
     out = np.zeros(max_index)
     out[index] = 1
     return out
+
+def save_image(image, filename="image.png"):
+    image = image.reshape(28, 28)
+    plt.imshow(image, cmap='gray')
+    plt.savefig(filename)
+    return 0
 
 if __name__=="__main__":
     d = 4

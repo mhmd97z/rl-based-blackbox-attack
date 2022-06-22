@@ -70,32 +70,34 @@ class Attack_Env(gym.Env):
 
 
     def step(self, action):
+        global TARGET_IMAGE, TARGET_IMAGE_ENC
+        print("Env Action: ", action)
         reward = 0
         done = False
         info = {}
 
         # Getting the updated image
-        updated_image = decode_image(self.current_image_enc + action, self.decoder)
+        updated_image_enc = self.current_image_enc + action
+        updated_image = decode_image(updated_image_enc, self.decoder)
 
         # Image out of bounds
         if np.max(updated_image) > 1 or np.min(updated_image) < 0: # If image is out of range
             reward = -100
+            print("Image out of bounds")
         else: # If image is in bounds then Perturb the image
             self.relative_pos_vector += np.reshape(updated_image - self.current_image, (self.image_dims))
-            self.current_image_enc = self.current_image_enc + action
-            self.current_image = decode_image(self.current_image_enc, self.decoder)
-            self.current_image_label = np.argmax(classify_image(self.current_image, self.classifier))
-
+            self.current_image = updated_image
+            self.current_image_enc = updated_image_enc
+            self.current_image_label = np.argmax(classify_image(updated_image, self.classifier))
             reward = \
                 self.beta * np.log(
                     np.clip(get_class_prob(self.current_image, self.target_image_label, self.classifier), 1e-5, 1)) +\
                 (1 - self.beta) * np.log(
                     np.clip(get_class_prob(self.current_image, self.orig_image_label, self.classifier), 1e-5, 1))
 
-        if self.current_image_label == self.target_image_label or\
-            self.n_step >= self.max_steps:
+        if self.current_image_label == self.target_image_label:
             done = True
-
+            print("Done")
         self.n_step += 1
 
 
@@ -130,7 +132,19 @@ class Attack_Env(gym.Env):
 A manaul base case to test the environmnet 
 """
 def run_base_case(env, n_episodes):
+
+    for episode in range(n_episodes):
+        env.reset()
+        done = 0
+
+        target_image, target_image_enc = get_class_image(env.train_dataset, env.target_image_label, env.classifier, env.encoder, env.decoder)
+
+        while not done:
+            action = (target_image_enc - env.current_image_enc)/2
+            observation, reward, done, info = env.step(action)
+            print(f"Reward: {reward}, Done: {done}, Info: {info}")
     return 0
 
 if __name__ == "__main__":
     env = Attack_Env()
+    run_base_case(env, 100)
