@@ -9,36 +9,28 @@ from torch.utils.data import DataLoader,random_split
 from torch import nn
 import torch.nn.functional as F
 import torch.optim as optim
+import os
 
 
 class Encoder(nn.Module):
 
-    def __init__(self, encoded_space_dim, fc2_input_dim):
+    def __init__(self, encoded_space_dim):
         super().__init__()
-
-        ### Convolutional section
-        self.encoder_cnn = nn.Sequential(
-            nn.Conv2d(1, 8, 3, stride=2, padding=1),
-            nn.ReLU(True),
-            nn.Conv2d(8, 16, 3, stride=2, padding=1),
-            nn.BatchNorm2d(16),
-            nn.ReLU(True),
-            nn.Conv2d(16, 32, 3, stride=2, padding=0),
-            nn.ReLU(True)
-        )
-
-        ### Flatten layer
+        # ### Flatten layer
         self.flatten = nn.Flatten(start_dim=1)
 
         ### Linear section
         self.encoder_lin = nn.Sequential(
-            nn.Linear(3 * 3 * 32, 128),
+            nn.Linear(784, 512),
             nn.ReLU(True),
-            nn.Linear(128, encoded_space_dim)
+            nn.Linear(512, 32),
+            nn.ReLU(True),
+            nn.Linear(32, encoded_space_dim),
+            nn.Sigmoid()
         )
 
     def forward(self, x):
-        x = self.encoder_cnn(x)
+        # x = self.encoder_cnn(x)
         x = self.flatten(x)
         x = self.encoder_lin(x)
         return x
@@ -46,38 +38,21 @@ class Encoder(nn.Module):
 
 class Decoder(nn.Module):
 
-    def __init__(self, encoded_space_dim, fc2_input_dim):
+    def __init__(self, encoded_space_dim):
         super().__init__()
         self.decoder_lin = nn.Sequential(
-            nn.Linear(encoded_space_dim, 128),
+            nn.Linear(encoded_space_dim, 32),
             nn.ReLU(True),
-            nn.Linear(128, 3 * 3 * 32),
-            nn.ReLU(True)
-        )
-
-        self.unflatten = nn.Unflatten(dim=1,
-                                      unflattened_size=(32, 3, 3))
-
-        self.decoder_conv = nn.Sequential(
-            nn.ConvTranspose2d(32, 16, 3,
-                               stride=2, output_padding=0),
-            nn.BatchNorm2d(16),
+            nn.Linear(32, 512),
             nn.ReLU(True),
-            nn.ConvTranspose2d(16, 8, 3, stride=2,
-                               padding=1, output_padding=1),
-            nn.BatchNorm2d(8),
-            nn.ReLU(True),
-            nn.ConvTranspose2d(8, 1, 3, stride=2,
-                               padding=1, output_padding=1)
+            nn.Linear(512, 784),
+            nn.Sigmoid()
         )
 
     def forward(self, x):
         x = self.decoder_lin(x)
-        x = self.unflatten(x)
-        x = self.decoder_conv(x)
-        x = torch.sigmoid(x)
+        x = x.view((-1, 1, 28, 28))
         return x
-
 
 class Classifier(nn.Module):
     def __init__(self):
@@ -117,6 +92,9 @@ class Classifier(nn.Module):
         return out
 
 def load_weights(model, filename):
+    print(os.getcwd())
+    if not os.path.exists(filename):
+        filename = '/home/m4sulaim/CS886/rl-based-blackbox-attack/gym_bb_attack/envs/' + filename
     model.load_state_dict(torch.load(filename, map_location=torch.device('cpu')))
 
 def encode_image(image, encoder):
@@ -157,6 +135,14 @@ def get_class_prob(image, clas, classifier):
     image = torch.Tensor(image).unsqueeze(0).unsqueeze(0)
     return classifier(image).detach().numpy()[0][clas]
 
+def get_2ndclass_prob(image, clas, classifier):
+    image = torch.Tensor(image).unsqueeze(0).unsqueeze(0)
+    probs = classifier(image).detach().numpy()[0]
+    sorted_args = np.argsort(probs, axis=0)
+    if np.argmax(probs) == clas:
+        return probs[sorted_args[-2]]
+    return probs[sorted_args[-1]]
+
 def get_one_hot(index, max_index):
     out = np.zeros(max_index)
     out[index] = 1
@@ -169,25 +155,25 @@ def save_image(image, filename="image.png"):
     return 0
 
 if __name__=="__main__":
-    d = 4
-    encoder = Encoder(encoded_space_dim=d,fc2_input_dim=128)
+    d = 15
+    encoder = Encoder(encoded_space_dim=d)
     load_weights(encoder, "./encoder.pt")
-    decoder = Decoder(encoded_space_dim=d,fc2_input_dim=128)
+    decoder = Decoder(encoded_space_dim=d)
     load_weights(decoder, "./decoder.pt")
     classifier = Classifier()
     load_weights(classifier, "./classifier.pth")
 
-    data_dir = 'dataset'
-
-    train_dataset = torchvision.datasets.MNIST(data_dir, train=True, download=True)
-    test_dataset = torchvision.datasets.MNIST(data_dir, train=False, download=True)
-
-    m = len(train_dataset)
-
-    train_data, val_data = random_split(train_dataset, [int(m - m * 0.2), int(m * 0.2)])
-    batch_size = 1
-
-    train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size)
-    valid_loader = torch.utils.data.DataLoader(val_data, batch_size=batch_size)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
+    # data_dir = 'dataset'
+    #
+    # train_dataset = torchvision.datasets.MNIST(data_dir, train=True, download=True)
+    # test_dataset = torchvision.datasets.MNIST(data_dir, train=False, download=True)
+    #
+    # m = len(train_dataset)
+    #
+    # train_data, val_data = random_split(train_dataset, [int(m - m * 0.2), int(m * 0.2)])
+    # batch_size = 1
+    #
+    # train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size)
+    # valid_loader = torch.utils.data.DataLoader(val_data, batch_size=batch_size)
+    # test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
 
