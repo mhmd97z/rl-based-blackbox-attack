@@ -73,12 +73,15 @@ class Attack_Env(gym.Env):
         self.action_space = spaces.MultiDiscrete([3 for _ in range(15)])
 
     def step(self, action):
-        #print("Env Action: ", action)
-        #action = np.array(np.ones(shape=(self.n_enc_dims))) * self.alpha
+
         action = (np.array(action) - 1) * self.alpha
         reward = 0
         done = False
-        info = {}
+
+        info = {"done": 0,
+                "success": 0,
+                "lp_dist": self.lp_dist,
+                "n_step": 0}
 
         # Getting the updated image
         updated_image_enc = np.clip(self.current_image_enc + action, 0, 1)
@@ -96,7 +99,9 @@ class Attack_Env(gym.Env):
         self.current_image_label = np.argmax(classify_image(updated_image, self.classifier))
 
         self.lp_dist = self.calculate_lp_dist(self.relative_pos_vector)
-        info = {"lp_dist": self.lp_dist, "n_step": self.n_step}
+        info["lp_dist"] = self.lp_dist
+        info["n_step"] = self.n_step
+
         if self.lp_dist > self.epsilon:
             reward = -1 - 10 * (self.lp_dist/10)
         else:
@@ -109,8 +114,12 @@ class Attack_Env(gym.Env):
         #if self.current_image_label == self.target_image_label or self.n_step >= self.max_steps:
         if (self.current_image_label != self.orig_image_label and self.lp_dist <= self.epsilon) \
                 or self.n_step >= self.max_steps:
+            if self.current_image_label != self.orig_image_label and self.lp_dist <= self.epsilon:
+                info["success"] = 1
+            info["done"] = 1
+            #print(info)
             done = True
-            print(info)
+            #print(info)
             #print("Done")
         self.n_step += 1
 

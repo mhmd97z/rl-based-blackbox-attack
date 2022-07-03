@@ -54,6 +54,6 @@ tune.run(PPOTrainer, name="tues_ppo_10se_1sla_rand_3future_0past",
                              'model': {
                                  'fcnet_hiddens': [32, 16]
                              },
-                             'callbacks' : admission_stats,
+                             'callbacks' : attack_stats,
                              },
          stop={"timesteps_total": 100000000}, checkpoint_freq=50, checkpoint_at_end=True)
