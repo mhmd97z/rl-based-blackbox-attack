@@ -163,12 +163,12 @@ if __name__=="__main__":
     classifier = Classifier()
     load_weights(classifier, "./classifier.pth")
 
-    # data_dir = 'dataset'
-    #
-    # train_dataset = torchvision.datasets.MNIST(data_dir, train=True, download=True)
-    # test_dataset = torchvision.datasets.MNIST(data_dir, train=False, download=True)
-    #
-    # m = len(train_dataset)
+    data_dir = 'dataset'
+
+    train_dataset = torchvision.datasets.MNIST(data_dir, train=True, download=True)
+    test_dataset = torchvision.datasets.MNIST(data_dir, train=False, download=True)
+
+    m = len(train_dataset)
     #
     # train_data, val_data = random_split(train_dataset, [int(m - m * 0.2), int(m * 0.2)])
     # batch_size = 1

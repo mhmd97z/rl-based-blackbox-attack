@@ -34,8 +34,8 @@ tune.run(PPOTrainer, name="tues_ppo_10se_1sla_rand_3future_0past",
                                              [70000000, 0.001],  # Will change LR at timesteps in column 1 to column 2
                                              [100000000, 0.0004]],
                              "num_sgd_iter": 5,  # PPO hyperparameter
-                             "train_batch_size": 128,  # PPO hyperparameter
-                             "sgd_minibatch_size": 32,  # PPO hyperparameter
+                             "train_batch_size": 1024*8,  # PPO hyperparameter
+                             "sgd_minibatch_size": 1024,  # PPO hyperparameter
                              "lambda": 0.95,  # PPO hyperparameter
                              # "vf_clip_param": 40.0,
                              # "vf_loss_coeff": 0.05,
@@ -46,11 +46,11 @@ tune.run(PPOTrainer, name="tues_ppo_10se_1sla_rand_3future_0past",
                              #     "epsilon_timesteps": 28000000,  # Timesteps over which to anneal epsilon.
                              #
                              # },
-                            "evaluation_interval": 50,
-                            "evaluation_num_episodes": 10,
-                            "evaluation_config": {
-                                     "explore": False
-                                 },
+                            # "evaluation_interval": 50,
+                            # "evaluation_num_episodes": 10,
+                            # "evaluation_config": {
+                            #          "explore": False
+                            #      },
                              'model': {
                                  'fcnet_hiddens': [32, 16]
                              },
