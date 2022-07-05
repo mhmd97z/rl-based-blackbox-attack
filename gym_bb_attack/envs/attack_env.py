@@ -16,16 +16,19 @@ warnings.filterwarnings(action='ignore', category=DataConversionWarning)
 class Attack_Env(gym.Env):
     """ A DRS environment for OPENAI gym"""
 
-    def __init__(self):
+    def __init__(self, config):
 
         #Hyperparameters
-        self.epsilon = 5
-        self.alpha = 0.08
-        self.beta = 0.7
-        self.max_steps = 100
-        self.n_step = 0
+        self.epsilon = 5 # Max perturbation size
+        self.alpha = 0.01 # Step size for perturbation
+        self.beta = 0.99 # Weight for the 2nd highest class
+        self.max_steps = 100 # Max steps per episode
+        self.n_step = 0 # Current step
         self.image_dims = 28 * 28
         self.n_classes = 10
+        self.test = False
+        if config != None:
+            self.test = config["test"] # Testing or training
 
         # Original Image features
         self.orig_image = None # Original image
@@ -52,8 +55,11 @@ class Attack_Env(gym.Env):
         self.decoder.eval()
 
         # Dataset of image to train RL agent on
-        data_dir = 'dataset'
-        self.train_dataset = torchvision.datasets.MNIST(data_dir, train=True, download=True)
+        data_dir = '/home/m4sulaim/CS886/rl-based-blackbox-attack/dataset'
+        if self.test:
+            self.dataset = torchvision.datasets.MNIST(data_dir, train=False, download=False)
+        else:
+            self.dataset = torchvision.datasets.MNIST(data_dir, train=True, download=False)
 
         self.observation_space = spaces.Tuple((
                                             # The original image's encoding
@@ -70,10 +76,9 @@ class Attack_Env(gym.Env):
 
         # self.action_space = spaces.Box(low=-1, high=1,
         #                                shape=(self.n_enc_dims,), dtype=np.float32)
-        self.action_space = spaces.MultiDiscrete([3 for _ in range(15)])
+        self.action_space = spaces.MultiDiscrete([3 for _ in range(self.n_enc_dims)])
 
     def step(self, action):
-
         action = (np.array(action) - 1) * self.alpha
         reward = 0
         done = False
@@ -81,7 +86,8 @@ class Attack_Env(gym.Env):
         info = {"done": 0,
                 "success": 0,
                 "lp_dist": self.lp_dist,
-                "n_step": 0}
+                "n_step": 0,
+                "lp_success": 0}
 
         # Getting the updated image
         updated_image_enc = np.clip(self.current_image_enc + action, 0, 1)
@@ -102,32 +108,43 @@ class Attack_Env(gym.Env):
         info["lp_dist"] = self.lp_dist
         info["n_step"] = self.n_step
 
-        if self.lp_dist > self.epsilon:
-            reward = -1 - 10 * (self.lp_dist/10)
-        else:
-            reward = -1 + get_2ndclass_prob(self.current_image, self.orig_image_label, self.classifier)
+        # Possible rewards
+        # if self.lp_dist > self.epsilon:
+        #     reward = -1 - self.lp_dist
+        # else:
+#        reward = -1 - (self.lp_dist - self.epsilon) + get_2ndclass_prob(self.current_image, self.orig_image_label, self.classifier)
         #     self.beta * np.log(
         #         np.clip(get_2ndclass_prob(self.current_image, self.orig_image_label, self.classifier), 1e-5, 1)) +\
         #     (1 - self.beta) * np.log(
         #         np.clip(get_class_prob(self.current_image, self.orig_image_label, self.classifier), 1e-5, 1))
+        probs = get_probs(self.current_image, self.classifier)
+        reward = -1 + self.beta * get_2ndclass_prob(probs, self.orig_image_label)
+
 
         #if self.current_image_label == self.target_image_label or self.n_step >= self.max_steps:
-        if (self.current_image_label != self.orig_image_label and self.lp_dist <= self.epsilon) \
+        if (self.current_image_label != self.orig_image_label and self.n_step <= self.max_steps) \
                 or self.n_step >= self.max_steps:
-            if self.current_image_label != self.orig_image_label and self.lp_dist <= self.epsilon:
+
+            if self.n_step < self.max_steps - 1:
+                reward = get_2ndclass_prob(probs, self.orig_image_label) \
+                         * (self.max_steps - (self.n_step + 1)) \
+                         * (max(0, self.epsilon - self.lp_dist))
+
+            if self.current_image_label != self.orig_image_label: #and self.lp_dist <= self.epsilon:
                 info["success"] = 1
+                if self.lp_dist < self.epsilon:
+                    info["lp_success"] = 1
+
             info["done"] = 1
-            #print(info)
             done = True
-            #print(info)
-            #print("Done")
+
         self.n_step += 1
 
 
         return self.get_observation_space(), reward, done, info
 
     def reset(self):
-        self.orig_image = get_random_image(self.train_dataset)
+        self.orig_image = get_random_image(self.dataset)
         self.orig_image_label = np.argmax(classify_image(self.orig_image, self.classifier))
         self.orig_image_enc = encode_image(self.orig_image, self.encoder)
 
@@ -136,7 +153,7 @@ class Attack_Env(gym.Env):
         self.current_image_enc = self.orig_image_enc
 
         while self.current_image_label != self.orig_image_label:
-            self.orig_image = get_random_image(self.train_dataset)
+            self.orig_image = get_random_image(self.dataset)
             self.orig_image_label = np.argmax(classify_image(self.orig_image, self.classifier))
             self.orig_image_enc = encode_image(self.orig_image, self.encoder)
 
@@ -181,7 +198,7 @@ def run_base_case(env, n_episodes):
         env.reset()
         done = 0
 
-        target_image, target_image_enc = get_class_image(env.train_dataset, env.target_image_label, env.classifier, env.encoder, env.decoder)
+        target_image, target_image_enc = get_class_image(env.dataset, env.target_image_label, env.classifier, env.encoder, env.decoder)
 
         while not done:
             action = (target_image_enc - env.current_image_enc)/2

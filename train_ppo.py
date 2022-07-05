@@ -15,27 +15,28 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 
 def env_creator(env_config):
-    return Attack_Env()
+    return Attack_Env(env_config)
 
 
-#ray.init(address='auto')  # Uncomment on master node
-ray.init()  # Comment on master node
+ray.init(address='auto')  # Uncomment on master node
+#ray.init()  # Comment on master node
 
 register_env('bb_attack-v0', env_creator)
 
-tune.run(PPOTrainer, name="tues_ppo_10se_1sla_rand_3future_0past",
+tune.run(PPOTrainer, name="bb_attack",
                             config={"env": "bb_attack-v0",
+                            "env_config": {"test": False},
                              "num_gpus": 0,
                              "kl_coeff": 0.4,
-                             "num_workers":7, #number of parallel environments = total available CPU cores - 1
+                             "num_workers": 32, #number of parallel environments = total available CPU cores - 1
                              "framework": "tf",
                              "lr": 0.003,  # Initial learning rate
                              "lr_schedule": [[0, 0.003],  # Learning rate schedule to gradually change LR.
                                              [70000000, 0.001],  # Will change LR at timesteps in column 1 to column 2
                                              [100000000, 0.0004]],
                              "num_sgd_iter": 5,  # PPO hyperparameter
-                             "train_batch_size": 1024*8,  # PPO hyperparameter
-                             "sgd_minibatch_size": 1024,  # PPO hyperparameter
+                             "train_batch_size": 1024,  # PPO hyperparameter
+                             "sgd_minibatch_size": 32,  # PPO hyperparameter
                              "lambda": 0.95,  # PPO hyperparameter
                              # "vf_clip_param": 40.0,
                              # "vf_loss_coeff": 0.05,
@@ -46,14 +47,15 @@ tune.run(PPOTrainer, name="tues_ppo_10se_1sla_rand_3future_0past",
                              #     "epsilon_timesteps": 28000000,  # Timesteps over which to anneal epsilon.
                              #
                              # },
-                            # "evaluation_interval": 50,
-                            # "evaluation_num_episodes": 10,
-                            # "evaluation_config": {
-                            #          "explore": False
-                            #      },
+                            "evaluation_interval": 10000,
+                            "evaluation_num_episodes": 100,
+                            "evaluation_config": {
+                                "env_config": {"test": True},
+                                     "explore": False
+                                 },
                              'model': {
                                  'fcnet_hiddens': [32, 16]
                              },
                              'callbacks' : attack_stats,
                              },
-         stop={"timesteps_total": 100000000}, checkpoint_freq=50, checkpoint_at_end=True)
+         stop={"timesteps_total": 100000000}, checkpoint_freq=10000, checkpoint_at_end=True)

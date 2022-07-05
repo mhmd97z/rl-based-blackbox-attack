@@ -131,13 +131,14 @@ def classify_image(image, classifier):
     image = torch.Tensor(image).unsqueeze(0).unsqueeze(0)
     return classifier(image).detach().numpy()[0]
 
-def get_class_prob(image, clas, classifier):
+def get_probs(image, classifier):
     image = torch.Tensor(image).unsqueeze(0).unsqueeze(0)
-    return classifier(image).detach().numpy()[0][clas]
+    return classifier(image).detach().numpy()[0]
 
-def get_2ndclass_prob(image, clas, classifier):
-    image = torch.Tensor(image).unsqueeze(0).unsqueeze(0)
-    probs = classifier(image).detach().numpy()[0]
+"""
+Returns the highest prob of class that is not the given class
+"""
+def get_2ndclass_prob(probs, clas):
     sorted_args = np.argsort(probs, axis=0)
     if np.argmax(probs) == clas:
         return probs[sorted_args[-2]]
