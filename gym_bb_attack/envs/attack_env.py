@@ -1,5 +1,6 @@
 import time
 import gym
+import matplotlib.pyplot as plt
 from gym import spaces
 import numpy as np
 import math
@@ -18,55 +19,78 @@ class Attack_Env(gym.Env):
 
     def __init__(self, config):
 
-        #Hyperparameters
+        #Hyperparameters ################################################################
         self.epsilon = 5 # Max perturbation size
-        self.alpha = 0.01 # Step size for perturbation
+        self.alpha = 0.03 # Step size for perturbation
         self.beta = 0.99 # Weight for the 2nd highest class
         self.max_steps = 100 # Max steps per episode
         self.n_step = 0 # Current step
         self.image_dims = 28 * 28
         self.n_classes = 10
         self.test = False
+        self.done = 0 # Episode done flag
+        self.success = 0 # Episode success flag
+        self.train_clas = None # Class to train on
         if config != None:
             self.test = config["test"] # Testing or training
+            self.train_clas = config["train_class"] # Class to train on
 
-        # Original Image features
+        # Original Image features ########################################################
         self.orig_image = None # Original image
         self.orig_image_enc = None # Original image encoding
         self.orig_image_label = None # Original image label
         self.target_image_label = None # Target image label
+        self.encoding_clip_range = [-3, 3]
+        self.image_clip_range = [0, 1]
+        self.rel_pos_vec_clip_range = 2 * np.array(self.encoding_clip_range)
 
-        # Perturbed image features
+        # Perturbed image features ########################################################
         self.current_image = None # Perturbed image
         self.current_image_enc = None # Enc of perturbed image
         self.relative_pos_vector = None # Cumulative perturbations matrix
         self.current_image_label = None # Perturbed image label
         self.lp_dist = None
 
-        #Autoencoder and classifier models and weights
-        self.n_enc_dims = 15
+        #Autoencoder/PCA and classifier models and weights #################################
+        self.n_enc_dims = 64
+        self.n_act_dims = 64
+
+        # For autoencoder model
+        self.model_type = 'ae' #Use pca or ae
         self.encoder = Encoder(encoded_space_dim=self.n_enc_dims)
         load_weights(self.encoder, "./encoder.pt")
         self.decoder = Decoder(encoded_space_dim=self.n_enc_dims)
         load_weights(self.decoder, "./decoder.pt")
-        self.classifier = Classifier()
-        load_weights(self.classifier, "./classifier.pth")
         self.encoder.eval()
         self.decoder.eval()
+        self.classifier = Classifier()
+        load_weights(self.classifier, "./classifier.pth")
 
-        # Dataset of image to train RL agent on
+
+        # For PCA model
+        # self.model_type = 'pca' #Use pca or ae
+        # self.encoder = load_pca_model('model.pkl')
+        # self.decoder = self.encoder
+
+        # Dataset of image to train RL agent on ##############################################
         data_dir = '/home/m4sulaim/CS886/rl-based-blackbox-attack/dataset'
+        self.dataset = None
+        transform = transforms.Compose([transforms.ToTensor()])
         if self.test:
-            self.dataset = torchvision.datasets.MNIST(data_dir, train=False, download=False)
+            self.dataset = torchvision.datasets.MNIST(data_dir, train=False, download=False, transform=transform)
         else:
-            self.dataset = torchvision.datasets.MNIST(data_dir, train=True, download=False)
+            self.dataset = torchvision.datasets.MNIST(data_dir, train=True, download=False, transform=transform)
 
         self.observation_space = spaces.Tuple((
                                             # The original image's encoding
-                                            spaces.Box(low=0, high=1, shape=(self.n_enc_dims,), dtype=np.float32),
+                                            spaces.Box(low=self.encoding_clip_range[0],
+                                                       high=self.encoding_clip_range[1],
+                                                       shape=(self.n_act_dims,), dtype=np.float32),
 
                                             #Relative position vector
-                                            spaces.Box(low=-1, high=1, shape=(self.n_enc_dims,),dtype=np.float32),
+                                            spaces.Box(low=self.rel_pos_vec_clip_range[0],
+                                                       high=self.rel_pos_vec_clip_range[1],
+                                                       shape=(self.n_act_dims,),dtype=np.float32),
 
                                             #Current l_P  distance
                                             spaces.Box(low=0, high=100, shape=(1,),dtype=np.float32),
@@ -76,10 +100,13 @@ class Attack_Env(gym.Env):
 
         # self.action_space = spaces.Box(low=-1, high=1,
         #                                shape=(self.n_enc_dims,), dtype=np.float32)
-        self.action_space = spaces.MultiDiscrete([3 for _ in range(self.n_enc_dims)])
+        #self.action_space = spaces.MultiDiscrete([3 for _ in range(self.n_act_dims)])
+        self.action_space = spaces.Box(low=-0.1, high=0.1, shape=(self.n_act_dims,), dtype=np.float32)
 
     def step(self, action):
-        action = (np.array(action) - 1) * self.alpha
+        #action = self.action_space.sample() #Samples random action from action space
+        #action = (np.array(action) - 1) * self.alpha
+        action = np.array(action)
         reward = 0
         done = False
 
@@ -90,8 +117,11 @@ class Attack_Env(gym.Env):
                 "lp_success": 0}
 
         # Getting the updated image
-        updated_image_enc = np.clip(self.current_image_enc + action, 0, 1)
-        updated_image = np.clip(decode_image(updated_image_enc, self.decoder), 0, 1)
+        updated_image_enc = self.current_image_enc
+        updated_image_enc[:self.n_act_dims] = np.clip(self.current_image_enc[:self.n_act_dims] + action,
+                                    self.encoding_clip_range[0], self.encoding_clip_range[1])
+        updated_image = np.clip(decode_image(updated_image_enc, self.decoder, self.model_type),
+                                self.image_clip_range[0], self.image_clip_range[1])
 
         # # Image out of bounds
         # if np.max(updated_image) > 1 or np.min(updated_image) < 0: # If image is out of range
@@ -108,78 +138,65 @@ class Attack_Env(gym.Env):
         info["lp_dist"] = self.lp_dist
         info["n_step"] = self.n_step
 
-        # Possible rewards
-        # if self.lp_dist > self.epsilon:
-        #     reward = -1 - self.lp_dist
-        # else:
-#        reward = -1 - (self.lp_dist - self.epsilon) + get_2ndclass_prob(self.current_image, self.orig_image_label, self.classifier)
-        #     self.beta * np.log(
-        #         np.clip(get_2ndclass_prob(self.current_image, self.orig_image_label, self.classifier), 1e-5, 1)) +\
-        #     (1 - self.beta) * np.log(
-        #         np.clip(get_class_prob(self.current_image, self.orig_image_label, self.classifier), 1e-5, 1))
-        probs = get_probs(self.current_image, self.classifier)
-        reward = -1 + self.beta * get_2ndclass_prob(probs, self.orig_image_label)
-
+        #probs = get_probs(self.current_image, self.classifier)
+        #reward = -1 * (self.current_image_label == self.orig_image_label)
+        #reward = max(0, 15 - self.lp_dist)/15
 
         #if self.current_image_label == self.target_image_label or self.n_step >= self.max_steps:
-        if (self.current_image_label != self.orig_image_label and self.n_step <= self.max_steps) \
+        if (self.current_image_label != self.orig_image_label) \
                 or self.n_step >= self.max_steps:
 
-            if self.n_step < self.max_steps - 1:
-                reward = get_2ndclass_prob(probs, self.orig_image_label) \
-                         * (self.max_steps - (self.n_step + 1)) \
-                         * (max(0, self.epsilon - self.lp_dist))
+            if self.current_image_label != self.orig_image_label:
+                reward += (15 - self.lp_dist)/1.5
 
-            if self.current_image_label != self.orig_image_label: #and self.lp_dist <= self.epsilon:
-                info["success"] = 1
+            if self.current_image_label != self.orig_image_label:
+                info["success"], self.success = 1, 1
                 if self.lp_dist < self.epsilon:
                     info["lp_success"] = 1
-
-            info["done"] = 1
-            done = True
+            info["done"], done, self.done = True, True, True
 
         self.n_step += 1
-
+        if self.test: print(f"test:{self.test}, obs: {self.get_observation_space()}")
 
         return self.get_observation_space(), reward, done, info
 
     def reset(self):
-        self.orig_image = get_random_image(self.dataset)
+        self.done = False
+        self.success = False
+        self.orig_image = get_random_image(self.dataset, self.train_clas)
         self.orig_image_label = np.argmax(classify_image(self.orig_image, self.classifier))
-        self.orig_image_enc = encode_image(self.orig_image, self.encoder)
+        self.orig_image_enc = np.clip(encode_image(self.orig_image, self.encoder, self.model_type),
+                                      self.encoding_clip_range[0], self.encoding_clip_range[1])
 
-        self.current_image = decode_image(self.orig_image_enc, self.decoder)
+        self.current_image = np.clip(decode_image(self.orig_image_enc, self.decoder, self.model_type),
+                                     self.image_clip_range[0], self.image_clip_range[1])
         self.current_image_label = np.argmax(classify_image(self.current_image, self.classifier))
         self.current_image_enc = self.orig_image_enc
 
         while self.current_image_label != self.orig_image_label:
-            self.orig_image = get_random_image(self.dataset)
+            self.orig_image = get_random_image(self.dataset, self.train_clas)
             self.orig_image_label = np.argmax(classify_image(self.orig_image, self.classifier))
-            self.orig_image_enc = encode_image(self.orig_image, self.encoder)
+            self.orig_image_enc = np.clip(encode_image(self.orig_image, self.encoder, self.model_type),
+                                          self.encoding_clip_range[0], self.encoding_clip_range[1])
 
-            self.current_image = decode_image(self.orig_image_enc, self.decoder)
+            self.current_image = np.clip(decode_image(self.orig_image_enc, self.decoder, self.model_type),
+                                         self.image_clip_range[0], self.image_clip_range[1])
             self.current_image_label = np.argmax(classify_image(self.current_image, self.classifier))
             self.current_image_enc = self.orig_image_enc
-
-        # self.target_image_label = np.random.randint(0, 10)
-        # while self.target_image_label == self.orig_image_label:
-        #     self.target_image_label = np.random.randint(0, 10)
 
         self.relative_pos_vector = np.reshape(self.current_image - self.orig_image, (self.image_dims))
         self.lp_dist = self.calculate_lp_dist(self.relative_pos_vector)
         self.n_step = 0
-
+        if self.test: print(f"test:{self.test}, obs: {self.get_observation_space()}")
         return self.get_observation_space()
 
     def get_observation_space(self):
-        observation_space = [self.orig_image_enc,
-                             self.current_image_enc - self.orig_image_enc,
-                             np.array([self.calculate_lp_dist(self.relative_pos_vector)]),
+        enc_diff = self.current_image_enc - self.orig_image_enc
+        observation_space = [self.orig_image_enc[:self.n_act_dims],
+                             enc_diff[:self.n_act_dims],
+                             #self.current_image_enc[:self.n_act_dims],
+                             np.array([self.calculate_lp_dist(self.relative_pos_vector)], dtype=np.float32),
                              self.orig_image_label]
-                             #, self.current_image_label]
-                             #get_one_hot(self.orig_image_label, self.n_classes),
-                             #get_one_hot(self.current_image_label, self.n_classes)]
-
         return observation_space
 
     def calculate_lp_dist(self, vector):
@@ -188,6 +205,19 @@ class Attack_Env(gym.Env):
         #lp_dist = np.max(np.abs(vector))
         return lp_dist
 
+    def render(self):
+        if self.done == True:
+            if self.success == 1:
+                plt.figure()
+                plt.subplot(1, 2, 1)
+                plt.imshow(self.orig_image, cmap='gray')
+                plt.title(f"{self.orig_image_label}")
+                plt.subplot(1, 2, 2)
+                plt.imshow(self.current_image, cmap='gray')
+                plt.title(f"{self.current_image_label} ({self.lp_dist})")
+                plt.savefig("/home/m4sulaim/CS886/images/image_" + str(time.time()) + ".png")
+                print("Saved fig")
+        return True
 
 """
 A manaul base case to test the environmnet 

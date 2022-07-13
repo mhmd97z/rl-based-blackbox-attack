@@ -25,11 +25,13 @@ register_env('bb_attack-v0', env_creator)
 
 tune.run(PPOTrainer, name="bb_attack",
                             config={"env": "bb_attack-v0",
-                            "env_config": {"test": False},
+                            "env_config": {"test": False,
+                                           'train_class': tune.grid_search([i for i in range(10)])},
                              "num_gpus": 0,
+                            "render_env": False,
                              "kl_coeff": 0.4,
-                             "num_workers": 32, #number of parallel environments = total available CPU cores - 1
-                             "framework": "tf",
+                             "num_workers": 3, #number of parallel environments = total available CPU cores - 1
+                             "framework": "torch",
                              "lr": 0.003,  # Initial learning rate
                              "lr_schedule": [[0, 0.003],  # Learning rate schedule to gradually change LR.
                                              [70000000, 0.001],  # Will change LR at timesteps in column 1 to column 2
@@ -47,15 +49,17 @@ tune.run(PPOTrainer, name="bb_attack",
                              #     "epsilon_timesteps": 28000000,  # Timesteps over which to anneal epsilon.
                              #
                              # },
-                            "evaluation_interval": 10000,
-                            "evaluation_num_episodes": 100,
-                            "evaluation_config": {
-                                "env_config": {"test": True},
-                                     "explore": False
-                                 },
+
+                            # "evaluation_interval": 1,
+                            # "evaluation_num_episodes": 100,
+                            # "evaluation_config": {
+                            #     "env_config": {"test": True},
+                            #          "explore": False
+                            #      },
+
                              'model': {
-                                 'fcnet_hiddens': [32, 16]
+                                 'fcnet_hiddens': [256, 128, 64]
                              },
                              'callbacks' : attack_stats,
                              },
-         stop={"timesteps_total": 100000000}, checkpoint_freq=10000, checkpoint_at_end=True)
+         stop={"timesteps_total": 500000}, checkpoint_freq=10000, checkpoint_at_end=True)
